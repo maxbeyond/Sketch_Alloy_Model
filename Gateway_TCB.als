@@ -130,13 +130,13 @@ fact {all g: Gateway, c: Controller | {
 
 
 // mbox is trusted if its code is attested and pkts are authenticated
-pred trustMbox [d: Mbox, g: Gateway] {
+pred trustMbox [d: Mbox] {
     d.SW = Attested
     d.pktsAccepted = Authenticated
 }
 
 // vswitch is trusted if its code is attested and pkts are authenticated
-pred trustVswitch [d: Vswitch, g:Gateway] {
+pred trustVswitch [d: Vswitch] {
     d.SW = Attested
     d.pktsAccepted=Authenticated
 }
@@ -242,8 +242,8 @@ pred PktSignReq [a: Agent, h: Hypervisor] {
 
 fact {all c: Controller | (c.trust = Trusted) <=> trustController[c]}
 fact {all g: Gateway | {
-    all m: g.mbox | (m.trust = Trusted) <=> trustMbox[m,g]
-    all v: g.vswitch | (v.trust = Trusted) <=> trustVswitch[v,g]
+    all m: g.mbox | (m.trust = Trusted) <=> trustMbox[m]
+    all v: g.vswitch | (v.trust = Trusted) <=> trustVswitch[v]
     (g.trust = Trusted) <=> trustGW[g] 
   }
 }
