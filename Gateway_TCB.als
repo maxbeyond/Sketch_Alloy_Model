@@ -90,9 +90,8 @@ fact {all c: Controller | {
 }
 
 // enforce relationship between controllers and gateways
-fact {all c: Controller, g: Gateway | {
+fact {all c: Controller, g: Gateway |
     g in c.gateway and c in g.controller
-  }
 }
 
 // mboxes must be part of a gateway
@@ -113,7 +112,6 @@ fact {all a: Agent | {
   }  
 }
 
-
 // hypervisors only with gateways or controllers
 fact {all h: Hypervisor | {
     Capabilities in h.capabilities
@@ -122,12 +120,9 @@ fact {all h: Hypervisor | {
   }
 }
 
-fact {all g: Gateway, c: Controller | {
-    disj [g.hyp, c.hyp] 
-//    disj [g.hyp.agent, c.hyp.agent]
-  }
+fact {all g: Gateway, c: Controller | 
+  disj [g.hyp, c.hyp]
 }
-
 
 // mbox is trusted if its code is attested and pkts are authenticated
 pred trustMbox [d: Mbox] {
@@ -152,6 +147,11 @@ pred correctPkts[g:Gateway] {
    (v.pktsAccepted = Authenticated) <=> authPkt[v,g]
    (v.SW = Attested) <=> attestedSW[v,g]
   }
+  all c: g.controller | {
+    (c.policy = Protected) <=> PolicySecured[c]
+    (c.channel = AuthEncryp) <=> AuthEncrypChannel[c]
+  }
+  (g.channel = AuthEncryp) <=> AuthEncrypChannel[g]
 }  
 
 
@@ -164,7 +164,6 @@ pred trustController [c:Controller] {
 // gateway is trusted if controller is trusted, control channel uses authenticated encryption,
 // all vswitchs are trusted, and all mboxes are trusted 
 pred trustGW [g: Gateway] {
-    correctPkts[g]
     all c: g.controller | c.trust=Trusted
     all v: g.vswitch | v.trust=Trusted
     all m: g.mbox | m.trust=Trusted
@@ -314,8 +313,14 @@ assert badDP {
 check badDP for 10
 
 
+assert pkt2correctMbox {
+  all p: Pkt | p in BenignPkt =>
+    (correctPkts[TrustedDP] => p.action = Allow)
+}
+check pkt2correctMbox for 10
+
 // Generate a sample instance of the model
 pred simulate {
   some TrustedDP
 }
-run simulate for 15
+run simulate for 5
