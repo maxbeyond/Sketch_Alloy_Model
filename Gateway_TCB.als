@@ -137,8 +137,8 @@ pred trustVswitch [d: Vswitch] {
 }
 
 
-// packets authenticated by PktSigning
-pred correctPkts[g:Gateway] {
+// alternative for trustGW
+pred gatewayTest[g:Gateway] {
   all m: g.mbox | {
     (m.pktsAccepted = Authenticated) <=> authPkt[m,g] 
     (m.SW = Attested) <=> attestedSW[m,g]
@@ -153,6 +153,47 @@ pred correctPkts[g:Gateway] {
   }
   (g.channel = AuthEncryp) <=> AuthEncrypChannel[g]
 }  
+
+// packet follows the correct path
+pred processPktCorrectly [p: Pkt, g: Gateway] { 
+  (correctGW[g]) and processPkt[p,g]
+}
+
+// gateway enforces packets following the correct path
+pred correctGW[g:Gateway] {
+  all v:g.vswitch, m:g.mbox | { correctPktPath[v,m] 
+    correctSW[v] 
+    correctSW[m]
+  }
+  all c: g.controller | { secureChannel[g,c] 
+    securePolicy[c]
+  }
+}
+
+// correct packet routing on the data channel
+pred correctPktPath[v: Vswitch, m: Mbox] {
+  v.pktsAccepted = Authenticated
+  m.pktsAccepted = Authenticated
+}
+
+// correct sw on the data plane
+pred correctSW[v: Vswitch] {
+  v.SW = Attested
+}
+pred correctSW[m: Mbox] {
+  m.SW = Attested
+}
+
+// secure control channel
+pred secureChannel[g: Gateway, c: Controller] {
+  g.channel = AuthEncryp
+  c.channel = AuthEncryp
+}
+
+// security policy is protected from attackers
+pred securePolicy[c: Controller] {
+  c.policy=Protected
+}
 
 
 // controller is trusted if control channel uses authenticated encryption and security policy is protected
@@ -173,12 +214,13 @@ pred trustGW [g: Gateway] {
 // if malicious packets are processed by a trusted gateway they are dropped
 pred processPkt [p:Pkt, g: Gateway] {
   p.processBy = g
-  p in MaliciousPkt =>
-    (g.trust = Trusted <=> trustGW[g]) => p.action = Drop
+  trustGW[g] <=> (g.trust = Trusted)
+  (p in MaliciousPkt) => 
+    (g.trust = Trusted) => p.action = Drop
     else p.action = Allow
   else
-     (g.trust = Trusted <=> trustGW[g]) => p.action = Allow
-     else p.action = Drop
+    (g.trust = Trusted) => p.action = Allow
+    else p.action = Drop
 }
 
 // SW that is Attested requiers an agent to attest it
@@ -303,21 +345,23 @@ check controllerImpactsGW for 10
 
 // a malicious packet processed by a trusted gateway must be dropped
 // a benign packet is output
-assert badDP {
+assert testDP {
   all p: Pkt |  
     p in MaliciousPkt => 
       (processPkt[p, TrustedDP] => p.action = Drop)
     else
       (processPkt[p, TrustedDP] => p.action = Allow)
 }
-check badDP for 10
+check testDP for 10
 
 
-assert pkt2correctMbox {
-  all p: Pkt | p in BenignPkt =>
-    (correctPkts[TrustedDP] => p.action = Allow)
+assert correctPktProcessing { 
+  all p: BenignPkt | some g:Gateway |  {   
+   ( (g.trust = Trusted) and
+     processPktCorrectly[p,g] )  => p.action = Allow
+  }
 }
-check pkt2correctMbox for 10
+check correctPktProcessing for 10
 
 // Generate a sample instance of the model
 pred simulate {
