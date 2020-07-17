@@ -15,7 +15,8 @@ sig Gateway extends DP {
   controller: one Controller,
   channel: Channel,
   channelProtection: Agent,
-  hyp: lone Hypervisor
+  hyp: lone Hypervisor,
+  sysResource: CritStateorOp
 }
 
 sig Vswitch, Mbox extends DP {
@@ -29,13 +30,23 @@ sig Vswitch, Mbox extends DP {
 sig TrustedDP in Gateway {}
 
 sig Controller extends CP {
-  policy: Policy,
+  apps: set Apps,
+  appProection: apps -> Agent,
+  policy: CritStateorOp,
   policyProtection: Agent, 
   channel: Channel,
   channelProtection: Agent,
   gateway: set Gateway,
-  hyp: lone Hypervisor
+  hyp: lone Hypervisor,
+  sysResource: CritStateorOp
 }
+
+abstract sig Apps {
+  state: CritStateorOp,
+  ops: CritStateorOp
+}
+
+one sig PolicyApp, OtherApp extends Apps {}
 
 sig Hypervisor extends ReferenceMonitor {
   agent: set Agent
@@ -44,7 +55,8 @@ sig Hypervisor extends ReferenceMonitor {
 abstract sig Agent {
  leverages: set Capabilities
 }
-sig PktSign, CommAgent, SecPolicy, vTPM extends Agent {}
+
+sig PktSign, CommAgent, AppProtect, vTPM extends Agent {}
 
 abstract sig Pkt {
   processBy: set DP,
@@ -57,7 +69,7 @@ sig BenignPkt extends Pkt { }
 enum SWstate {Attested, Vulnerable}
 enum Paths {Authenticated, Tagged, Original}
 enum Trust {Trusted, NotTrusted}
-enum Policy {Protected, Exposed}
+enum CritStateorOp {Protected, Exposed}
 enum Channel {AuthEncryp, Encrypted, Plaintext}
 enum Action {Allow, Drop}
 
@@ -86,6 +98,7 @@ fact {all g: Gateway | {
 fact {all c: Controller | {
     some g: Gateway | g in c.gateway 
     one h:Hypervisor | h in c.hyp
+    one a: PolicyApp | a in c.apps
   }
 }
 
@@ -102,6 +115,11 @@ fact {all m:Mbox |
 // vswitch must be part of a gateway
 fact {all v:Vswitch |
   one g:Gateway | v in g.vswitch
+}
+
+// all apps must be in a controller
+fact {all a: Apps | 
+  some c: Controller | a in c.apps
 }
 
 // all agents must be in a hypervisor
@@ -148,7 +166,12 @@ pred gatewayTest[g:Gateway] {
    (v.SW = Attested) <=> attestedSW[v,g]
   }
   all c: g.controller | {
+/*
     (c.policy = Protected) <=> PolicySecured[c]
+*/
+    all a: c.apps |
+      ((a = PolicyApp) and (a.state = Protected) and (a.ops = Protected)) <=>
+        PolicySecured[c, a]
     (c.channel = AuthEncryp) <=> AuthEncrypChannel[c]
   }
   (g.channel = AuthEncryp) <=> AuthEncrypChannel[g]
@@ -256,8 +279,13 @@ pred AuthEncrypChannel [c: Controller] {
 }
 
 pred PolicySecured [c: Controller] {
-  c.policyProtection = SecPolicy
-  SecPolicy in c.hyp.agent
+  c.policyProtection = AppProtect
+  AppProtect in c.hyp.agent
+}
+
+pred PolicySecured [c: Controller, a: Apps] {
+  c.appProection[a] = AppProtect
+  AppProtect in c.hyp.agent
 }
 
 //hypervisor capabilities required and utilized by different agents
@@ -317,7 +345,7 @@ fact {all h: Hypervisor |
   all a: h.agent | {
     (a in PktSign) => PktSignReq[a,h]
     (a in CommAgent) => CommAgentReq[a,h]
-    (a in SecPolicy) => SecPolicyReq[a,h]
+    (a in AppProtect) => SecPolicyReq[a,h]
     (a in vTPM) => vTPMreq[a,h]
   }
 }
@@ -329,40 +357,148 @@ fact {all g: Gateway | (g.trust=Trusted) <=> (g in TrustedDP)}
 // all malicious packets are processed by some gateway
 fact {all p:Pkt | some g:Gateway | processPkt[p, g] }
 
-
-assert checkTrustedMbox {
-  some g: Gateway | some m: g.mbox | (m.trust = Trusted) => (
-    attestedSW[m,g] and authPkt[m,g]
-  )
+/* Example Attack Logic */
+// Control Channel:  Sniff
+pred canSeeFlow [g:Gateway] {
+  g.channel = Plaintext or g.controller.channel = Plaintext
 }
-check checkTrustedMbox for 5
 
-// for a gateway to be trusted, its controller must also be trusted
-assert controllerImpactsGW {
-  some g: Gateway | (g.trust = Trusted) => (g.controller.trust = Trusted)
+// Control Channel: Modify (eg MitM)
+pred canModFlow [g:Gateway] {
+  g.channel = Plaintext or 
+  g.controller.channel = Plaintext or 
+  g.vswitch.SW = Vulnerable
 }
-check controllerImpactsGW for 10
 
-// a malicious packet processed by a trusted gateway must be dropped
-// a benign packet is output
-assert testDP {
-  all p: Pkt |  
-    p in MaliciousPkt => 
-      (processPkt[p, TrustedDP] => p.action = Drop)
-    else
-      (processPkt[p, TrustedDP] => p.action = Allow)
+// Control Channel: Inject
+pred canInjectFlow [g:Gateway] {
+  ( (g.channel = Plaintext) or (g.channel = Encrypted) ) or 
+  ( (g.controller.channel = Plaintext) or (g.controller.channel = Encrypted) ) or
+  g.vswitch.SW = Vulnerable
 }
-check testDP for 10
 
-
-assert correctPktProcessing { 
-  all p: BenignPkt | some g:Gateway |  {   
-   ( processPktCorrectly[p,g] )  => p.action = Allow
-  }
+// Controller App: Mod State (some app)
+pred canModAppState [c: Controller] {
+  some a: c.apps | a.state = Exposed
 }
-check correctPktProcessing for 10
 
+// Controller App: Mod State (specific app)
+pred canModAppState [c: Controller, a: Apps] {
+  a in c.apps
+  a.state = Exposed
+}
 
+// Controller App: Mod Operation (some app)
+pred canModAppOps [c: Controller] {
+  some a: c.apps | a.ops = Exposed
+}
+
+// Controller App: Mod Operation (specific app)
+pred canModAppOps [c: Controller, a: Apps] {
+  a in c.apps 
+  a.ops = Exposed
+}
+
+// Controller: tamper with some reource
+pred canTamperwithResource [c: Controller] {
+  c.sysResource = Exposed
+}
+
+// Gateway: tamper with some reource
+pred canTamperwithResource [g: Gateway] {
+  g.sysResource = Exposed
+}
+
+// Controller: protect some reource
+pred protectedResource[c: Controller] {
+  let h = c.hyp |
+  (c.sysResource = Protected) <=> (
+    ( (Mediation + Isolation) in h.capabilities ) ) 
+}
+
+// Controller: protect some reource
+pred protectedResource[g: Gateway] {
+  let h = g.hyp |
+  (g.sysResource = Protected) <=> (
+    ( (Mediation + Isolation) in h.capabilities ) ) 
+}
+
+// Check for attacker ability to sniff
+assert attackerSniffsFlow {
+  some g:Gateway | !canSeeFlow[g]
+}
+check attackerSniffsFlow for 10
+
+// Attacker can't sniff flows on trusted GW
+assert attackerNotSniffTrsutedGWFlows {
+  some g:Gateway | 
+    trustGW[g] => ! canSeeFlow[g] 
+}
+check attackerNotSniffTrsutedGWFlows for 10
+
+// Attacker can mod flows (allow attack)
+assert attackerModsFlow {
+  some g:Gateway | all p:MaliciousPkt | 
+    (canModFlow[g] and processPkt[p,g]) => p.action = Drop
+}
+check attackerModsFlow for 10
+
+// Attacker can't mod flows on trusted GW
+assert attackerNotModsTrsutedGWFlows {
+  some g:Gateway | 
+    trustGW[g] => ! canModFlow[g] 
+}
+check attackerNotModsTrsutedGWFlows for 10
+
+// Attacker can inject flows (allow attack)
+assert attackerInjectsFlow {
+  some g:Gateway | all p:MaliciousPkt | 
+    (canInjectFlow[g] and processPkt[p,g]) => p.action = Drop
+}
+check attackerInjectsFlow for 10
+
+// Attacker can't inject flows on trusted GW
+assert attackerNotInjectTrsutedGWFlows {
+  some g:Gateway | 
+    trustGW[g] => ! canInjectFlow[g] 
+}
+check attackerNotInjectTrsutedGWFlows for 10
+
+// Attacker can modify an apps state (allow attack)
+assert attackerModAppState {
+  some c: Controller | some g:Gateway | all p:MaliciousPkt |
+    (canModAppState[c] and processPkt[p,g]) => p.action = Drop
+}
+check attackerModAppState for 10
+
+// Attacker can't modify policy apps state 
+assert attackerNotModTrustedAppState {
+  some c: Controller | some a: c.apps |
+    (trustController[c] and (a = PolicyApp)) => ! canModAppState[c, a]
+}
+check attackerNotModTrustedAppState for 10
+
+// Attacker can modify an apps ops (allow attack)
+assert attackerModAppOps {
+  some c: Controller | some g:Gateway | all p:MaliciousPkt |
+    (canModAppOps[c] and processPkt[p,g]) => p.action = Drop
+}
+check attackerModAppOps for 10
+
+// Attacker can't modify policy apps ops 
+assert attackerNotModTrustedAppOps {
+  some c: Controller | some a: c.apps |
+    (trustController[c] and (a = PolicyApp)) => ! canModAppOps[c, a]
+}
+check attackerNotModTrustedAppOps for 10
+
+// Attacker can't tamper with a protected resource on gateway or controller
+assert protectSysResource {
+ some c: Controller |
+    protectedResource[c] => ! canTamperwithResource[c]
+  some g: Gateway | 
+    protectedResource[g] => ! canTamperwithResource[g]
+}
 
 // Generate a sample instance of the model
 pred simulate {
