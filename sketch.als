@@ -1,27 +1,10 @@
+enum Security {Trusted, NotTrusted}
 
-// sig PacketStream {}
-
-one sig Sketch {
-  compute: Trust,
-  memory: Trust,
-  incoming: PacketStream
-  outgoing: PacketStream
+sig Sequence {
+  prev: lone Sequence,
+  next: lone Sequence
 }
-
-one sig NIC {
-  incoming: PacketStream
-  outgoing: PacketStream
-}
-
-enum Trust {Trusted, NotTrusted}
-
-sig Data {}
-
-sig PacketStream {
-  packets: set Packet
-  startPkt: one Packet
-  endPkt: one Packet
-}
+one sig StartSeq, EndSeq in Sequence {}
 
 // sig Data {}
 sig Packet {
@@ -29,15 +12,25 @@ sig Packet {
   //data: one Data
 }
 
-sig Sequence {
-  prev: lone Sequence,
-  next: lone Sequence
+sig PacketStream {
+  packets: set Packet,
+  startPkt: one Packet,
+  endPkt: one Packet
 }
 
-one sig StartSeq, EndSeq extends Sequence {}
-one sig StartPkt, EndPkt extends Packet {}
+// Sketch  <-  incoming  <-  NIC
+// NIC  ->  outgoing  ->  Sketch
+one sig Sketch {
+ compute: Security,
+ memory: Security,
+  incoming: PacketStream,
+  outgoing: PacketStream
+}
 
-one sig Recv, Send extends PacketStream {}
+one sig NIC {
+  incoming: PacketStream,
+  outgoing: PacketStream
+}
 
 // make sure sequence is consecutive
 fact {
@@ -53,38 +46,97 @@ fact {
   all s1, s2: Sequence { s1.prev = s2 => s2.next = s1 }
 }
 
+// restriction for packet stream
 fact {
-  // make sure StartPkt is before EndPkt
-  EndPkt.sequence in StartPkt.sequence.*next
-  StartPkt.sequence in EndPkt.sequence.*prev
+  all ps: PacketStream {
+    // make sure startPkt is before endPkt
+    ps.endPkt.sequence in ps.startPkt.sequence.*next
+    ps.startPkt.sequence in ps.endPkt.sequence.*prev
 
-  // all send pkt is between StartPkt and EndPkt
-  all p: Send.packets | p.sequence in StartPkt.sequence.*next
-  all p: Send.packets | p.sequence in EndPkt.sequence.*prev
-
-  // no send pkt has same sequence
-  all p1, p2: Send.packets | p1 != p2 => p1.sequence != p2.sequence
+    // all pkt is between startPkt and endPkt
+    all p: ps.packets | p.sequence in ps.startPkt.sequence.*next
+    all p: ps.packets | p.sequence in ps.endPkt.sequence.*prev
+	
+	ps.startPkt in ps.packets
+    ps.endPkt in ps.packets
+  }
 }
 
+// sgx
 fact {
-  // MAC ensures not injection (attacker could not spoof packets)
-  all p: Recv.packets | p in Send.packets
-  
-  // heartbeat is received
-  EndPkt in Recv.packets
-
-  // Recv check sequence => all previous packets are received
-  all p: Recv.packets | p != StartPkt => 
-		{ one prev_p: Recv.packets | prev_p.sequence = p.sequence.prev }
+  Sketch.compute = Trusted
+  Sketch.memory = Trusted
 }
 
-assert InputIntegrity {
-  // Recv == Send
-  all p: Send.packets | p in Recv.packets
-  all p: Recv.packets | p in Send.packets
+// Sketch Checker and NIC Checker will guarantee 
+// 1. all send pkt's sequence is successive
+// 2. no send pkt has same sequence
+pred SuccessiveSeq[ps: PacketStream] {
+  all p1: ps.packets | 
+    p1 != ps.endPkt => { 
+      one p2: ps.packets | p2.sequence = p1.sequence.next}
+}
+pred NoDuplicateSeq[ps: PacketStream] {
+  all p1, p2: ps.packets | p1 != p2 => p1.sequence != p2.sequence
+}
+fact {
+  SuccessiveSeq[NIC.incoming]
+  SuccessiveSeq[Sketch.outgoing]
+  NoDuplicateSeq[NIC.incoming]
+  NoDuplicateSeq[Sketch.outgoing]
 }
 
-check InputIntegrity for 5
+// MAC ensures not injection (attacker could not spoof packets)
+pred NoInject[sendPS, recvPS: PacketStream] {
+  all p: recvPS.packets | p in sendPS.packets
+}
+fact {
+  NoInject[NIC.incoming, Sketch.incoming]
+  NoInject[Sketch.outgoing, NIC.outgoing]
+}
 
-// // no recv pkt has same sequence
-// all p1, p2: Recv.packets | p1 != p2 => p1.sequence != p2.sequence
+// check successive seq => all previous packets are received
+pred NoDrop [ps: PacketStream, startPkt: Packet] {
+  all p1: ps.packets | p1 != startPkt => 
+		{ one p2: ps.packets | p2.sequence = p1.sequence.prev }
+}
+fact {
+  NoDrop[Sketch.incoming, NIC.incoming.startPkt]
+  NoDrop[NIC.outgoing, Sketch.outgoing.startPkt]
+}
+
+// heartbeat/ACK is received
+pred HeartbeatReceived [sendPS, recvPS: PacketStream] {
+  sendPS.endPkt in recvPS.packets
+}
+fact {
+  HeartbeatReceived[NIC.incoming, Sketch.incoming]
+  HeartbeatReceived[Sketch.outgoing, NIC.outgoing]
+}
+
+// InputIntegrity
+pred SamePacketStream[ps1, ps2: PacketStream] {
+  all p: ps1.packets | p in ps2.packets
+  all p: ps2.packets | p in ps1.packets
+}
+pred InputIntegrity [] {
+  SamePacketStream[Sketch.incoming, NIC.incoming]
+  SamePacketStream[Sketch.outgoing, NIC.outgoing]
+}
+
+pred ComputeIntegrity [] {
+  Sketch.compute = Trusted
+}
+
+pred MemoryIntegrity [] {
+  Sketch.memory = Trusted
+}
+
+assert TrustedSketch {
+  InputIntegrity[]
+  ComputeIntegrity[]
+  MemoryIntegrity[]
+}
+
+check TrustedSketch for 5
+// run InputIntegrity
