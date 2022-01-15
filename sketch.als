@@ -1,35 +1,44 @@
-enum Security {Trusted, NotTrusted}
+open util/integer
 
-sig Sequence {
-  prev: lone Sequence,
-  next: lone Sequence
+enum MemoryPosition { Enclave, Host }
+enum Security { Safe, Compromise }
+
+one sig Server {
+  OS: Security
 }
-one sig StartSeq, EndSeq in Sequence {}
 
-// sig Data {}
+sig Data {}
+
 sig Packet {
-  sequence: one Sequence
-  //data: one Data
+  data: one Data
+}
+
+sig AttestedPacket {
+  data: one Data
+  seqNum: one Int
 }
 
 sig PacketStream {
-  packets: set Packet,
-  startPkt: one Packet,
-  endPkt: one Packet
+  packets: seq Packet
+}
+
+sig AttestedPacketStream {
+  attestedPackets: seq AttestedPacket,
 }
 
 // Sketch  <-  incoming  <-  NIC
 // NIC  ->  outgoing  ->  Sketch
 one sig Sketch {
- compute: Security,
- memory: Security,
-  incoming: PacketStream,
-  outgoing: PacketStream
+  code: MemoryPosition,
+  counter: MemoryPosition,
+  heap: MemoryPosition,
+  incoming: seq Packet,
+  outgoing: seq Packet
 }
 
 one sig NIC {
-  incoming: PacketStream,
-  outgoing: PacketStream
+  incoming: AttestedPacketStream,
+  outgoing: AttestedPacketStream
 }
 
 // make sure sequence is consecutive
@@ -48,7 +57,7 @@ fact {
 
 // restriction for packet stream
 fact {
-  all ps: PacketStream {
+  all ps: AttestedPacketStream {
     // make sure startPkt is before endPkt
     ps.endPkt.sequence in ps.startPkt.sequence.*next
     ps.startPkt.sequence in ps.endPkt.sequence.*prev
@@ -62,21 +71,15 @@ fact {
   }
 }
 
-// sgx
-fact {
-  Sketch.compute = Trusted
-  Sketch.memory = Trusted
-}
-
 // Sketch Checker and NIC Checker will guarantee 
 // 1. all send pkt's sequence is successive
 // 2. no send pkt has same sequence
-pred SuccessiveSeq[ps: PacketStream] {
+pred SuccessiveSeq[ps: AttestedPacketStream] {
   all p1: ps.packets | 
     p1 != ps.endPkt => { 
       one p2: ps.packets | p2.sequence = p1.sequence.next}
 }
-pred NoDuplicateSeq[ps: PacketStream] {
+pred NoDuplicateSeq[ps: AttestedPacketStream] {
   all p1, p2: ps.packets | p1 != p2 => p1.sequence != p2.sequence
 }
 fact {
@@ -87,7 +90,7 @@ fact {
 }
 
 // MAC ensures not injection (attacker could not spoof packets)
-pred NoInject[sendPS, recvPS: PacketStream] {
+pred NoInject[sendPS, recvPS: AttestedPacketStream] {
   all p: recvPS.packets | p in sendPS.packets
 }
 fact {
@@ -96,7 +99,7 @@ fact {
 }
 
 // check successive seq => all previous packets are received
-pred NoDrop [ps: PacketStream, startPkt: Packet] {
+pred NoDrop [ps: AttestedPacketStream, startPkt: Packet] {
   all p1: ps.packets | p1 != startPkt => 
 		{ one p2: ps.packets | p2.sequence = p1.sequence.prev }
 }
@@ -106,7 +109,7 @@ fact {
 }
 
 // heartbeat/ACK is received
-pred HeartbeatReceived [sendPS, recvPS: PacketStream] {
+pred HeartbeatReceived [sendPS, recvPS: AttestedPacketStream] {
   sendPS.endPkt in recvPS.packets
 }
 fact {
@@ -115,7 +118,7 @@ fact {
 }
 
 // InputIntegrity
-pred SamePacketStream[ps1, ps2: PacketStream] {
+pred SamePacketStream[ps1, ps2: AttestedPacketStream] {
   all p: ps1.packets | p in ps2.packets
   all p: ps2.packets | p in ps1.packets
 }
@@ -125,11 +128,12 @@ pred InputIntegrity [] {
 }
 
 pred ComputeIntegrity [] {
-  Sketch.compute = Trusted
+  (Sketch.code = Enclave) || (Server.OS = Safe)
 }
 
 pred MemoryIntegrity [] {
-  Sketch.memory = Trusted
+  (Sketch.counter = Enclave && Sketch.heap = Enclave) 
+  || (Server.OS = Safe)
 }
 
 assert TrustedSketch {
@@ -137,6 +141,7 @@ assert TrustedSketch {
   ComputeIntegrity[]
   MemoryIntegrity[]
 }
+
 
 check TrustedSketch for 5
 // run InputIntegrity
