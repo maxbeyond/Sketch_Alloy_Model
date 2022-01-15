@@ -5,20 +5,15 @@ enum ProgramPostion { EnclaveProgram, HostProgram }
 enum MemoryType { EnclaveMemory, SecureMemory, HostMemory }
 enum Security { Safe, Compromised }
 
-// one sig Server {
-//   os: one OS
-// }
-// sig OS {
-//   security: Security
-// }
-
 one sig Attacker {
   rootAccess: Bool
 }
 
 sig Program {
   programPostion: ProgramPostion,
-  security: Security
+  codeAttest: Bool,
+  bootSecurity: Security,
+  runSecurity: Security
 }
 
 sig Memory {
@@ -50,14 +45,14 @@ one sig PacketsBuffer {
   pktBuf: one Memory
 }
 
-// attacker ability: if get root access, all program and memory are compromised
+// attacker ability: if get root access, all program and memory in host are compromised
 fact {
   (Attacker.rootAccess = True) => {
-    all p: Program | p.programPostion = HostProgram => p.security = Compromised
-    all m: Memory | m.memoryType = HostMemory => m.security = Compromised
+    all p: Program | (p.programPostion = HostProgram) => (p.runSecurity = Compromised)
+    all m: Memory | (m.memoryType = HostMemory) => (m.security = Compromised)
   }
   else {
-    all p: Program | p.security = Safe
+    all p: Program | p.runSecurity = Safe
     all m: Memory | m.security = Safe
   }
 }
@@ -65,7 +60,7 @@ fact {
 // pkt stream is not changed only if PacketsBuffer is safe
 // assume no packet drop due to buffer overflow
 fact {
-  PacketsBuffer.pktBuf.security = Safe => {
+  (PacketsBuffer.pktBuf.security = Safe) => {
     Sketch.incomingPackets = NIC.incomingPackets
     NIC.outgoingPackets = Sketch.incomingPackets
   }
@@ -73,8 +68,14 @@ fact {
 
 // code and memory in enclave are safe
 fact {
-  all p: Program | (p.programPostion = EnclaveProgram) => (p.security = Safe)
+  all p: Program | (p.codeAttest = True) => (p.bootSecurity = Safe)
+  all p: Program | (p.programPostion = EnclaveProgram) => (p.runSecurity = Safe)
   all m: Memory | (m.memoryType = EnclaveMemory) => (m.security = Safe)
+}
+
+// strawman (code attestation) only guarantee boot security
+fact {
+  all p: Program | (p.codeAttest = True) => (p.bootSecurity = Safe)
 }
 
 // strawman (secure memory) only guarantee memory are safe
@@ -83,7 +84,8 @@ fact {
 }
 
 pred ComputeIntegrity [] {
-  Sketch.program.security = Safe
+  Sketch.program.bootSecurity = Safe
+  Sketch.program.runSecurity = Safe
 }
 
 pred MemoryIntegrity [] {
@@ -91,16 +93,9 @@ pred MemoryIntegrity [] {
 }
 
 // InputIntegrity
-// pred SamePacketStream[ps1, ps2: PacketStream] {
-// //   all p: ps1.packets | p in ps2.packets
-// //   all p: ps2.packets | p in ps1.packets
-//     ps1 = ps2
-// }
 pred InputIntegrity[] {
   Sketch.incomingPackets = NIC.incomingPackets
   Sketch.outgoingPackets = NIC.outgoingPackets
-  // SamePacketStream[Sketch.incoming, NIC.incoming]
-  // SamePacketStream[Sketch.outgoing, NIC.outgoing]
 }
 
 pred TrustedSketch[] {
@@ -109,22 +104,68 @@ pred TrustedSketch[] {
   MemoryIntegrity[]
 }
 
-// sketch is running in host memory
-pred sketchInHostMemory[] {
+// plain system : sketch is running in host memory
+pred PlainSystem[] {
   Sketch.program.programPostion = HostProgram
   Sketch.counter.memoryType = HostMemory
   Sketch.heap.memoryType = HostMemory
+  PacketsBuffer.memoryType = HostMemory
 }
 
-pred attackerGetRootAccess[] {
+pred attackerHasRootAccess[] {
   Attacker.rootAccess = True
 }
 
-assert attackSuccess {
-  (attackerGetRootAccess[] && sketchInHostMemory[]) => 
+// plain system would be compromised if attacker has root access
+assert PlainSystemFail {
+  (attackerHasRootAccess[] && PlainSystem[]) => 
     (!TrustedSketch[])
 }
+check PlainSystemFail for 5
 
-check attackSuccess for 5
+// strawman (code attestation)
+pred StrawmanCodeAttest[] {
+  all p: Program | p.codeAttest = True
+}
 
-// run InputIntegrity
+// code attestation would be compromised if attacker has root access
+assert CodeAttestFail {
+  (attackerHasRootAccess[] 
+    && PlainSystem[] 
+    && StrawmanCodeAttest[]) => 
+      (!TrustedSketch[])
+}
+check CodeAttestFail for 5
+
+// strawman (secure memory)
+pred StrawmanSecureMemory[] {
+  Sketch.program.programPostion = HostProgram
+  Sketch.counter.memoryType = SecureMemory
+  Sketch.heap.memoryType = SecureMemory
+  PacketsBuffer.memoryType = HostMemory
+}
+
+// secure memory would be compromised if attacker has root access
+assert SecureMemoryFail {
+  (attackerHasRootAccess[] 
+    && StrawmanSecureMemory[]) => 
+      (!TrustedSketch[])
+}
+check SecureMemoryFail for 5
+
+// only use enclave
+pred OnlyEnclave[] {
+  Sketch.program.programPostion = EnclaveProgram
+  Sketch.counter.memoryType = EnclaveMemory
+  Sketch.heap.memoryType = EnclaveMemory
+  PacketsBuffer.memoryType = HostMemory
+}
+
+// secure memory would be compromised if attacker has root access
+assert OnlyEnclaveFail {
+  (attackerHasRootAccess[] 
+    && OnlyEnclave[]) => 
+      (!TrustedSketch[])
+}
+check OnlyEnclaveFail for 5
+
