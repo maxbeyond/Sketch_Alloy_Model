@@ -28,12 +28,8 @@ sig Packet {
 
 sig PktSentByVM extends Packet {}
 sig PktFromNetwork extends Packet {}
-one sig HeartBeatPkt extends Packet {
-  // nounce: Int
-}
-one sig AckPkt extends Packet {
-  // nounce: Int
-}
+one sig HeartBeatPkt extends Packet {}
+one sig AckPkt extends Packet {}
 
 // Sketch  <-  incoming  <-  NIC
 // NIC  ->  outgoing  ->  Sketch
@@ -111,9 +107,6 @@ fact {
   !(NIC.incomingPackets.hasDups)
   !(Sketch.outgoingPackets.hasDups)
 }
-
-// all Program / Memory instances are used in model
-fact {}
 
 // pkt stream is not changed only if PacketsBuffer is safe
 // assume no packet drop due to buffer overflow
@@ -272,9 +265,6 @@ pred AttestedProtocol[] {
   SuccessiveSeq[EnclaveChecker.outgoingPackets]
   SuccessiveSeq[NICChecker.incomingPackets]
   SuccessiveSeq[NICChecker.outgoingPackets]
-
-//  DebugSeq[EnclaveChecker.outgoingPackets] 
-// DebugSeq[EnclaveChecker.incomingPackets]
 
   // add or remove attested data as packet header
   AddOrRemoveAttest[EnclaveChecker.incomingPackets, Sketch.incomingPackets]
