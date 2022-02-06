@@ -180,6 +180,51 @@ pred attackerHasRootAccess[] {
   Attacker.rootAccess = True
 }
 
+pred ComputeAttack[] {
+  Sketch.program.bootSecurity = Compromised
+  Sketch.program.runSecurity = Compromised
+}
+
+pred UseComputeAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && ComputeAttack[] && (!TrustedSketch[])
+}
+run UseComputeAttack for 10
+
+pred CounterAttack[] {
+  Sketch.counter.security = Compromised
+}
+
+pred UseCounterAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && CounterAttack[] && (!TrustedSketch[])
+}
+run UseCounterAttack for 10
+
+pred HeapAttack[] {
+  Sketch.heap.security = Compromised
+}
+
+pred UseHeapAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && HeapAttack[] && (!TrustedSketch[])
+}
+run UseHeapAttack for 10
+
+pred InputAttack[] {
+  Sketch.incomingPackets.elems = none
+  Sketch.outgoingPackets.elems = none
+  NIC.incomingPackets.elems != none
+  NIC.outgoingPackets.elems != none
+}
+
+pred UseInputAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && InputAttack[] && (!TrustedSketch[])
+}
+run UseInputAttack for 10
+
+
 // plain system would be compromised if attacker has root access
 assert PlainSystemFail {
   (attackerHasRootAccess[] && PlainSystem[]) => 
