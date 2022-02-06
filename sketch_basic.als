@@ -108,6 +108,12 @@ fact {
   !(Sketch.outgoingPackets.hasDups)
 }
 
+// all Memory and Program instances are used in model
+fact {
+  Sketch.program = Program
+  Sketch.counter + Sketch.heap + PacketsBuffer = Memory
+}
+
 // pkt stream is not changed only if PacketsBuffer is safe
 // assume no packet drop due to buffer overflow
 fact {
@@ -335,4 +341,4 @@ pred simulate {
   TrustedSketch[]
 }
 // assume we have some in/out packets
-run simulate for 20 but exactly 2 PktSentByVM, exactly 3 PktFromNetwork
+run simulate for 10 but exactly 2 PktSentByVM, exactly 3 PktFromNetwork
