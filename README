@@ -1,3 +1,3 @@
-Alloy model of IoT security architecture to demonstrate trusted ability.
-
-Alloy tool can be found here: https://github.com/AlloyTools/org.alloytools.alloy/releases
+sketch.als: older version model, use self-defined sequence
+sketch_basic.als: good model. use sequence from library
+sketch_bridged.als: model to put into paper.
