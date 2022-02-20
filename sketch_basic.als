@@ -119,7 +119,7 @@ fact {
 fact {
  (PacketsBuffer.security = Safe) => {
    Sketch.incomingPackets = NIC.incomingPackets
-   NIC.outgoingPackets = Sketch.incomingPackets
+   NIC.outgoingPackets = Sketch.outgoingPackets
  }
 }
 
