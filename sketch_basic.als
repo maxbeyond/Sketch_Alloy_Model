@@ -26,8 +26,7 @@ sig Packet {
   data: one Data
 }
 
-sig PktSentByVM extends Packet {}
-sig PktFromNetwork extends Packet {}
+sig DatapathPkt extends Packet {}
 one sig HeartBeatPkt extends Packet {}
 one sig AckPkt extends Packet {}
 
@@ -63,13 +62,9 @@ one sig NICChecker {
   outgoingPackets: seq AttestedPacket
 }
 
-// attacker ability: if get root access, all program and memory in host are compromised
+// if no attacker, assume program and memory are safe
 fact {
-  (Attacker.rootAccess = True) => {
-    all p: Program | (p.programPostion = HostProgram) => (p.runSecurity = Compromised)
-    all m: Memory | (m.memoryType = HostMemory) => (m.security = Compromised)
-  }
-  else {
+  (Attacker.rootAccess = False) => {
     all p: Program | p.runSecurity = Safe
     all m: Memory | m.security = Safe
   }
@@ -81,16 +76,26 @@ fact {
 // 3. heartbeat or ack pkt
 fact {
   // all Packet instances are used in model
-  HeartBeatPkt + AckPkt + PktSentByVM + PktFromNetwork = Packet
-
-  // incoming & outgoing packets 
-  all p: NIC.incomingPackets.elems | (p in PktFromNetwork) || (p in HeartBeatPkt)
-  all p: Sketch.outgoingPackets.elems | (p in PktSentByVM) || (p in AckPkt)
-
-  // no useless PktFromNetwork or PktSentByVM
-  all p: PktFromNetwork | p in NIC.incomingPackets.elems
-  all p: PktSentByVM | p in Sketch.outgoingPackets.elems
+  HeartBeatPkt + AckPkt + DatapathPkt = Packet
+  
+  // no useless DatapathPkt
+  all p: DatapathPkt | (p in NIC.incomingPackets.elems) || (p in Sketch.outgoingPackets.elems)
 }
+
+// if plain system, no heartbeat/ack packets
+fact NoHeartbeat {
+  PlainSystem[] => {
+    all p: NIC.incomingPackets.elems | (p in DatapathPkt)
+    all p: NIC.outgoingPackets.elems | (p in DatapathPkt)
+    all p: Sketch.incomingPackets.elems | (p in DatapathPkt)
+    all p: Sketch.outgoingPackets.elems | (p in DatapathPkt)
+  }
+  OurSystem[] => {
+    all p: NIC.incomingPackets.elems | (p in DatapathPkt) || (p in HeartBeatPkt)
+    all p: Sketch.outgoingPackets.elems | (p in DatapathPkt) || (p in AckPkt)
+  }
+}
+
 
 // all AttestedPacket instances are used in model
 fact {
@@ -103,9 +108,16 @@ fact {
 
 // no duplicate packets in sequence
 // we use distinct Packet instance for input integrity check
-fact {
+fact NoDupPkt {
   !(NIC.incomingPackets.hasDups)
+  !(NIC.outgoingPackets.hasDups)
+  !(Sketch.incomingPackets.hasDups)
   !(Sketch.outgoingPackets.hasDups)
+
+  // easy to check: 'NIC incoming pkts' and 'sketch outgoing pkts' has no overlap
+  all p: NIC.incomingPackets.elems | !(p in Sketch.outgoingPackets.elems)
+  all p: Sketch.outgoingPackets.elems | !(p in NIC.incomingPackets.elems)
+
 }
 
 // all Memory and Program instances are used in model
@@ -163,9 +175,9 @@ pred InputIntegrity[] {
 }
 
 pred TrustedSketch[] {
-  InputIntegrity[]
   ComputeIntegrity[]
   MemoryIntegrity[]
+  InputIntegrity[]
 }
 
 // plain system : sketch is running in host memory
@@ -187,7 +199,7 @@ pred ComputeAttack[] {
 
 pred UseComputeAttack {
   attackerHasRootAccess[] && PlainSystem[]
-  && ComputeAttack[] && (!TrustedSketch[])
+  && ComputeAttack[] && (!ComputeIntegrity[])
 }
 run UseComputeAttack for 10
 
@@ -197,7 +209,7 @@ pred CounterAttack[] {
 
 pred UseCounterAttack {
   attackerHasRootAccess[] && PlainSystem[]
-  && CounterAttack[] && (!TrustedSketch[])
+  && CounterAttack[] && (!MemoryIntegrity[])
 }
 run UseCounterAttack for 10
 
@@ -207,22 +219,54 @@ pred HeapAttack[] {
 
 pred UseHeapAttack {
   attackerHasRootAccess[] && PlainSystem[]
-  && HeapAttack[] && (!TrustedSketch[])
+  && HeapAttack[] && (!MemoryIntegrity[])
 }
 run UseHeapAttack for 10
 
-pred InputAttack[] {
-  Sketch.incomingPackets.elems = none
-  Sketch.outgoingPackets.elems = none
-  NIC.incomingPackets.elems != none
-  NIC.outgoingPackets.elems != none
+// inject packets
+pred InjectAttack[] {
+  some p: Sketch.incomingPackets.elems | !(p in NIC.incomingPackets.elems)
+  some p: NIC.outgoingPackets.elems | !(p in Sketch.outgoingPackets.elems)
+
+  all p: NIC.incomingPackets.elems | p in Sketch.incomingPackets.elems
+  all p: Sketch.outgoingPackets.elems | p in NIC.outgoingPackets.elems
 }
 
-pred UseInputAttack {
+pred UseInjectAttack {
   attackerHasRootAccess[] && PlainSystem[]
-  && InputAttack[] && (!TrustedSketch[])
+  && InjectAttack[] && (!InputIntegrity[])
 }
-run UseInputAttack for 10
+run UseInjectAttack for 10
+
+// drop packets
+pred DropAttack[] {
+  some p: NIC.incomingPackets.elems | !(p in Sketch.incomingPackets.elems)
+  some p: Sketch.outgoingPackets.elems | !(p in NIC.outgoingPackets.elems)
+}
+
+pred UseDropAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && DropAttack[] && (!InputIntegrity[])
+}
+run UseDropAttack for 10
+
+pred ModifyPS[PS1: seq Packet, PS2: seq Packet] {
+  (#PS1) = (#PS2)
+  // all i: Int | (lt[i, #PS1] && gte[i, 0]) => (PS1[i] != PS2[i])
+  PS1.elems != PS2.elems
+}
+
+// modify outgoing packets
+pred ModifyAttack[] {
+  ModifyPS[NIC.incomingPackets, Sketch.incomingPackets]
+  ModifyPS[NIC.outgoingPackets, Sketch.outgoingPackets]
+}
+
+pred UseModifyAttack {
+  attackerHasRootAccess[] && PlainSystem[]
+  && ModifyAttack[] && (!InputIntegrity[])
+}
+run UseModifyAttack for 10
 
 
 // plain system would be compromised if attacker has root access
@@ -232,36 +276,6 @@ assert PlainSystemFail {
 }
 check PlainSystemFail for 10
 
-// strawman (code attestation)
-pred StrawmanCodeAttest[] {
-  all p: Program | p.codeAttest = True
-}
-
-// code attestation would be compromised if attacker has root access
-assert CodeAttestFail {
-  (attackerHasRootAccess[] 
-    && PlainSystem[] 
-    && StrawmanCodeAttest[]) => 
-      (TrustedSketch[])
-}
-check CodeAttestFail for 10
-
-// strawman (secure memory)
-pred StrawmanSecureMemory[] {
-  Sketch.program.programPostion = HostProgram
-  Sketch.counter.memoryType = SecureMemory
-  Sketch.heap.memoryType = SecureMemory
-  PacketsBuffer.memoryType = HostMemory
-}
-
-// secure memory would be compromised if attacker has root access
-assert SecureMemoryFail {
-  (attackerHasRootAccess[] 
-    && StrawmanSecureMemory[]) => 
-      (TrustedSketch[])
-}
-check SecureMemoryFail for 10
-
 // Idea 1: use enclave
 pred UseEnclave[] {
   Sketch.program.programPostion = EnclaveProgram
@@ -269,13 +283,6 @@ pred UseEnclave[] {
   Sketch.heap.memoryType = EnclaveMemory
   PacketsBuffer.memoryType = HostMemory
 }
-
-// Only using Idea 1 is insufficient if attacker has root access
-assert OnlyEnclaveFail {
-  (attackerHasRootAccess[] && UseEnclave[]) =>
-      (TrustedSketch[])
-}
-check OnlyEnclaveFail for 10
 
 // MAC ensures that attacker could not inject, modify packets
 // all pkt in ps1 should be in ps2
@@ -327,15 +334,6 @@ pred AttestedProtocol[] {
   StartSequence[NICChecker.outgoingPackets, EnclaveChecker.outgoingPackets]
 }
 
-// Idea 1 + Idea 2 still suffer from enclave-disconnect-attack
-assert EnclaveAndAttestFail {
-  (attackerHasRootAccess[] 
-    && UseEnclave[]
-    && AttestedProtocol[]) => 
-      (TrustedSketch[])
-}
-check EnclaveAndAttestFail for 10
-
 // we use timeout mechanism to make sure at least one heartbeat will get ack packet
 // here we model only that heartbeat/ack packet
 // we can guarantee that input integrity for all packets before heartbeat/ack
@@ -367,12 +365,16 @@ pred HeartBeat[] {
   RecvAckPacket[]
 }
 
+pred OurSystem[] {
+  UseEnclave[]
+  AttestedProtocol[]
+  HeartBeat[]
+}
+
 // Idea 1/2/3 will ensure trust sketch
 assert OurSystemCorrect {
   (attackerHasRootAccess[] 
-    && UseEnclave[]
-    && AttestedProtocol[]
-    && HeartBeat[]) => 
+    && OurSystem[]) => 
       (TrustedSketch[])
 }
 check OurSystemCorrect for 10 but 4 Int
@@ -380,10 +382,8 @@ check OurSystemCorrect for 10 but 4 Int
 // Generate a sample instance of the model
 pred simulate {
   attackerHasRootAccess[] 
-  UseEnclave[]
-  AttestedProtocol[]
-  HeartBeat[]
+  OurSystem[]
   TrustedSketch[]
 }
 // assume we have some in/out packets
-run simulate for 10 but exactly 2 PktSentByVM, exactly 3 PktFromNetwork
+run simulate for 10
