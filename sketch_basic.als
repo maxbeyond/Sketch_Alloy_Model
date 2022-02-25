@@ -197,31 +197,31 @@ pred ComputeAttack[] {
   Sketch.program.runSecurity = Compromised
 }
 
-pred UseComputeAttack {
+pred UseComputeAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && ComputeAttack[] && (!ComputeIntegrity[])
 }
-run UseComputeAttack for 10
+run UseComputeAttackOnPlain for 10
 
 pred CounterAttack[] {
   Sketch.counter.security = Compromised
 }
 
-pred UseCounterAttack {
+pred UseCounterAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && CounterAttack[] && (!MemoryIntegrity[])
 }
-run UseCounterAttack for 10
+run UseCounterAttackOnPlain for 10
 
 pred HeapAttack[] {
   Sketch.heap.security = Compromised
 }
 
-pred UseHeapAttack {
+pred UseHeapAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && HeapAttack[] && (!MemoryIntegrity[])
 }
-run UseHeapAttack for 10
+run UseHeapAttackOnPlain for 10
 
 // inject packets
 pred InjectAttack[] {
@@ -232,11 +232,11 @@ pred InjectAttack[] {
   all p: Sketch.outgoingPackets.elems | p in NIC.outgoingPackets.elems
 }
 
-pred UseInjectAttack {
+pred UseInjectAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && InjectAttack[] && (!InputIntegrity[])
 }
-run UseInjectAttack for 10
+run UseInjectAttackOnPlain for 10
 
 // drop packets
 pred DropAttack[] {
@@ -244,11 +244,11 @@ pred DropAttack[] {
   some p: Sketch.outgoingPackets.elems | !(p in NIC.outgoingPackets.elems)
 }
 
-pred UseDropAttack {
+pred UseDropAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && DropAttack[] && (!InputIntegrity[])
 }
-run UseDropAttack for 10
+run UseDropAttackOnPlain for 10
 
 pred ModifyPS[PS1: seq Packet, PS2: seq Packet] {
   (#PS1) = (#PS2)
@@ -262,11 +262,11 @@ pred ModifyAttack[] {
   ModifyPS[NIC.outgoingPackets, Sketch.outgoingPackets]
 }
 
-pred UseModifyAttack {
+pred UseModifyAttackOnPlain {
   attackerHasRootAccess[] && PlainSystem[]
   && ModifyAttack[] && (!InputIntegrity[])
 }
-run UseModifyAttack for 10
+run UseModifyAttackOnPlain for 10
 
 
 // plain system would be compromised if attacker has root access
