@@ -371,6 +371,36 @@ pred OurSystem[] {
   HeartBeat[]
 }
 
+assert UseComputeAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(ComputeAttack[])
+}
+check UseComputeAttackOnOurSys for 10
+
+assert UseCounterAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(CounterAttack[])
+}
+check UseCounterAttackOnOurSys for 10
+
+assert UseHeapAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(HeapAttack[])
+}
+check UseHeapAttackOnOurSys for 10
+
+assert UseInjectAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(InjectAttack[])
+}
+check UseInjectAttackOnOurSys for 10
+
+assert UseDropAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(DropAttack[])
+}
+check UseDropAttackOnOurSys for 10
+
+assert UseModifyAttackOnOurSys {
+  (attackerHasRootAccess[] && OurSystem[]) => !(ModifyAttack[])
+}
+check UseModifyAttackOnOurSys for 10
+
 // Idea 1/2/3 will ensure trust sketch
 assert OurSystemCorrect {
   (attackerHasRootAccess[] 
