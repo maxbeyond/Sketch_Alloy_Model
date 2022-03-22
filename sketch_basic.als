@@ -24,14 +24,23 @@ sig Memory {
 sig Data {}
 sig Packet {
   data: one Data
+  // timestamp: one Int
 }
 
 sig DatapathPkt extends Packet {}
-one sig HeartBeatPkt extends Packet {}
-one sig AckPkt extends Packet {}
+
+// sent/recv denotes whether the packet is successfully sent or received
+one sig HeartBeatPkt extends Packet {
+  sent: Bool,
+  recv: Bool
+}
+one sig AckPkt extends Packet {
+  sent: Bool,
+  recv: Bool
+}
 
 // Sketch  <-  incoming  <-  NIC
-// NIC  ->  outgoing  ->  Sketch
+// Sketch  ->  outgoing  ->  NIC
 one sig Sketch {
   program: one Program,
   counter: one Memory,
@@ -47,19 +56,21 @@ one sig NIC {
 
 one sig PacketsBuffer in Memory {}
 
-sig AttestedPacket {
-  pkt: one Packet,
-  sequence: Int
+sig MyString {}
+sig TrafficSummary {
+  input: seq Packet,
+  counter: one Int,
+  hash: one MyString
 }
 
 one sig EnclaveChecker {
-  incomingPackets: seq AttestedPacket,
-  outgoingPackets: seq AttestedPacket
+  inSummary: TrafficSummary,
+  outSummary: TrafficSummary
 }
 
 one sig NICChecker {
-  incomingPackets: seq AttestedPacket,
-  outgoingPackets: seq AttestedPacket
+  inSummary: TrafficSummary,
+  outSummary: TrafficSummary
 }
 
 // if no attacker, assume program and memory are safe
@@ -84,26 +95,10 @@ fact {
 
 // if plain system, no heartbeat/ack packets
 fact NoHeartbeat {
-  PlainSystem[] => {
-    all p: NIC.incomingPackets.elems | (p in DatapathPkt)
-    all p: NIC.outgoingPackets.elems | (p in DatapathPkt)
-    all p: Sketch.incomingPackets.elems | (p in DatapathPkt)
-    all p: Sketch.outgoingPackets.elems | (p in DatapathPkt)
-  }
-  OurSystem[] => {
-    all p: NIC.incomingPackets.elems | (p in DatapathPkt) || (p in HeartBeatPkt)
-    all p: Sketch.outgoingPackets.elems | (p in DatapathPkt) || (p in AckPkt)
-  }
-}
-
-
-// all AttestedPacket instances are used in model
-fact {
-  EnclaveChecker.incomingPackets.elems
-  + EnclaveChecker.outgoingPackets.elems
-  + NICChecker.incomingPackets.elems
-  + NICChecker.outgoingPackets.elems
-   = AttestedPacket
+  all p: NIC.incomingPackets.elems | (p in DatapathPkt)
+  all p: NIC.outgoingPackets.elems | (p in DatapathPkt)
+  all p: Sketch.incomingPackets.elems | (p in DatapathPkt)
+  all p: Sketch.outgoingPackets.elems | (p in DatapathPkt)
 }
 
 // no duplicate packets in sequence
@@ -117,7 +112,6 @@ fact NoDupPkt {
   // easy to check: 'NIC incoming pkts' and 'sketch outgoing pkts' has no overlap
   all p: NIC.incomingPackets.elems | !(p in Sketch.outgoingPackets.elems)
   all p: Sketch.outgoingPackets.elems | !(p in NIC.incomingPackets.elems)
-
 }
 
 // all Memory and Program instances are used in model
@@ -129,10 +123,10 @@ fact {
 // pkt stream is not changed only if PacketsBuffer is safe
 // assume no packet drop due to buffer overflow
 fact {
- (PacketsBuffer.security = Safe) => {
-   Sketch.incomingPackets = NIC.incomingPackets
-   NIC.outgoingPackets = Sketch.outgoingPackets
- }
+  (PacketsBuffer.security = Safe) => {
+    Sketch.incomingPackets = NIC.incomingPackets
+    NIC.outgoingPackets = Sketch.outgoingPackets
+  }
 }
 
 // code attestation can guarantee boot security
@@ -284,91 +278,60 @@ pred UseEnclave[] {
   PacketsBuffer.memoryType = HostMemory
 }
 
-// MAC ensures that attacker could not inject, modify packets
-// all pkt in ps1 should be in ps2
-pred MAC[ps1: seq AttestedPacket, ps2: seq AttestedPacket] {
-  all p: ps1.elems | p in ps2.elems
-}
-
-// sequence number is successive
-pred SuccessiveSeq[ps: seq AttestedPacket] {
-  all i: Int | (lt[i, #ps] && gt[i, 0]) => (eq[ps[i].sequence, add[ps[sub[i, 1]].sequence, 1]])
-}
-
-// EnclaveChecker and NICChecker will start with the same sequence number
-// ps1 <- memory <- ps2
-pred StartSequence[ps1: seq AttestedPacket, ps2: seq AttestedPacket] {
-  gt[#ps1, 0] => eq[ps1[0].sequence, ps2[0].sequence]
-}
-
-// we add attested data as packet header, so AttestedPacket and Packet should be the same packet
-pred AddOrRemoveAttest[attestPS: seq AttestedPacket, PS: seq Packet] {
-  (#attestPS) = (#PS)
-  all i: Int | (lt[i, #PS] && gte[i, 0]) => (attestPS[i].pkt = PS[i])
-}
-
-// limit int range to avoid int overflow because alloy use 4 bit int default
-fact {
-  all p: AttestedPacket | lt[p.sequence, 6] && gt[p.sequence, -6]
-}
-
-// Idea 2: attestation protocol
-pred AttestedProtocol[] {
-  // MAC ensures that attacker could not inject, modify packets
-  MAC[EnclaveChecker.incomingPackets, NICChecker.incomingPackets]
-  MAC[NICChecker.outgoingPackets, EnclaveChecker.outgoingPackets]
-
-  // successive sequence number 
-  SuccessiveSeq[EnclaveChecker.incomingPackets]
-  SuccessiveSeq[EnclaveChecker.outgoingPackets]
-  SuccessiveSeq[NICChecker.incomingPackets]
-  SuccessiveSeq[NICChecker.outgoingPackets]
-
-  // add or remove attested data as packet header
-  AddOrRemoveAttest[EnclaveChecker.incomingPackets, Sketch.incomingPackets]
-  AddOrRemoveAttest[EnclaveChecker.outgoingPackets, Sketch.outgoingPackets]
-  AddOrRemoveAttest[NICChecker.incomingPackets, NIC.incomingPackets]
-  AddOrRemoveAttest[NICChecker.outgoingPackets, NIC.outgoingPackets]
-
-  StartSequence[EnclaveChecker.incomingPackets, NICChecker.incomingPackets]
-  StartSequence[NICChecker.outgoingPackets, EnclaveChecker.outgoingPackets]
-}
-
 // we use timeout mechanism to make sure at least one heartbeat will get ack packet
-// here we model only that heartbeat/ack packet
+// here we model only one heartbeat/ack packet
 // we can guarantee that input integrity for all packets before heartbeat/ack
 pred SendHeartBeat[] {
-  NIC.incomingPackets.last = HeartBeatPkt
+  HeartBeatPkt.sent = True
 }
-
 pred RecvAckPacket[] {
-  AckPkt in NIC.outgoingPackets.elems
+  AckPkt.recv = True
 }
 
-// enclave would reply ack after receiving heartbeat pkt
-fact EnclaveReplyAck {
-  // we guarantee input integrity for 
-  // 1. incomingPackets between 2 heartbeat
-  // 2. outgoingPackets between 2 ack pkt
-  // so we assume only 1 HeartBeatPkt and 1 AckPkt
-  // both of them are the last in the sequence
-  (HeartBeatPkt in Sketch.incomingPackets.elems)
-    <=> (AckPkt in Sketch.outgoingPackets.elems)
-  
-  (AckPkt in Sketch.outgoingPackets.elems)
-	=> (Sketch.outgoingPackets.last = AckPkt)
+pred EnclaveReplyAck[] {
+  // enclave would reply ack after receiving heartbeat pkt
+  (HeartBeatPkt.recv = True) => (AckPkt.sent = True)
+
+  // enclave only send ack after receiving heartbeat pkt
+  (AckPkt.sent = True) => (HeartBeatPkt.recv = True)
 }
 
-// Idea 3: heartbeat
-pred HeartBeat[] {
+fact HeartbeatSentRecv {
+  // recv is true only when send is true
+  (HeartBeatPkt.recv = True) => (HeartBeatPkt.sent = True)
+  (AckPkt.recv = True) => (AckPkt.sent = True)
+}
+
+fact TrafficSummaryInput {
+  EnclaveChecker.inSummary.input = Sketch.incomingPackets
+  EnclaveChecker.outSummary.input = Sketch.outgoingPackets
+  NICChecker.inSummary.input = NIC.incomingPackets
+  NICChecker.outSummary.input = NIC.outgoingPackets
+}
+
+pred IntegrityCheck[t1, t2: TrafficSummary] {
+  // checker will check two things
+  t1.counter = t2.counter
+  t1.hash = t2.hash
+
+  // crypto hash will guarantee following
+  (t1.counter = t2.counter && t1.hash = t2.hash) => (t1.input = t2.input)
+}
+
+// Idea 2: epoch check
+pred EpochCheck[] {
+  // traffic summary exchange
   SendHeartBeat[]
   RecvAckPacket[]
+  EnclaveReplyAck[]
+
+  IntegrityCheck[EnclaveChecker.inSummary, NICChecker.inSummary]
+  IntegrityCheck[EnclaveChecker.outSummary, NICChecker.outSummary]
 }
 
 pred OurSystem[] {
   UseEnclave[]
-  AttestedProtocol[]
-  HeartBeat[]
+  EpochCheck[]
 }
 
 assert UseComputeAttackOnOurSys {
