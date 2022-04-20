@@ -23,8 +23,7 @@ sig Memory {
 
 sig Data {}
 sig Packet {
-  data: one Data
-  // timestamp: one Int
+  hdr: one Data
 }
 
 sig DatapathPkt extends Packet {}
@@ -120,7 +119,7 @@ fact {
   Sketch.counter + Sketch.heap + PacketsBuffer = Memory
 }
 
-// pkt stream is not changed only if PacketsBuffer is safe
+// pkt stream is not changed if PacketsBuffer is safe
 // assume no packet drop due to buffer overflow
 fact {
   (PacketsBuffer.security = Safe) => {
@@ -136,7 +135,7 @@ fact {
 
 // enclave safety guarantee
 fact {
-  // remote attestation can be used for code in enclav10
+  // remote attestation can be used for code in enclave
   all p: Program | (p.programPostion = EnclaveProgram) => (p.codeAttest = True)
 
   // code and memory in enclave are safe
@@ -160,7 +159,8 @@ pred ComputeIntegrity [] {
 }
 
 pred MemoryIntegrity [] {
-  Sketch.counter.security = Safe && Sketch.heap.security = Safe
+  Sketch.counter.security = Safe
+  Sketch.heap.security = Safe
 }
 
 pred InputIntegrity[] {
